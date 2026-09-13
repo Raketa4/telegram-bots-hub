@@ -1,0 +1,6 @@
+.env
+*.log
+*.log.*
+orders.jsonl
+__pycache__/
+*.pyc
