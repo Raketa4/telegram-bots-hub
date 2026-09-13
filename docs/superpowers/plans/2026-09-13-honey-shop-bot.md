@@ -343,6 +343,19 @@ class TestCheckout(unittest.TestCase):
         checkout.add_address(entry, "ПВЗ Ozon")
         self.assertFalse(checkout.is_complete(entry))
 
+    def test_add_address_blank_does_not_advance(self):
+        entry = checkout.start_checkout({1: 1})
+        checkout.add_address(entry, "   ")
+        self.assertEqual(entry["state"], checkout.STATE_AWAITING_ADDRESS)
+        self.assertIsNone(entry["address"])
+
+    def test_add_phone_blank_does_not_advance(self):
+        entry = checkout.start_checkout({1: 1})
+        checkout.add_address(entry, "ПВЗ Ozon")
+        checkout.add_phone(entry, "   ")
+        self.assertEqual(entry["state"], checkout.STATE_AWAITING_PHONE)
+        self.assertIsNone(entry["phone"])
+
     def test_to_order_record_shape(self):
         entry = checkout.start_checkout({1: 2})
         checkout.add_address(entry, "ПВЗ Ozon")
@@ -395,13 +408,19 @@ def start_checkout(cart):
 
 
 def add_address(entry, text):
-    entry["address"] = text.strip()
+    text = text.strip()
+    if not text:
+        return entry  # blank input: stay in AWAITING_ADDRESS, caller re-prompts
+    entry["address"] = text
     entry["state"] = STATE_AWAITING_PHONE
     return entry
 
 
 def add_phone(entry, text):
-    entry["phone"] = text.strip()
+    text = text.strip()
+    if not text:
+        return entry  # blank input: stay in AWAITING_PHONE, caller re-prompts
+    entry["phone"] = text
     entry["state"] = STATE_NONE
     return entry
 
@@ -425,7 +444,7 @@ def to_order_record(user_id, username, entry):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `py -3.14 bots/honey-shop/tests/test_checkout.py -v`
-Expected: PASS (5 tests, ok)
+Expected: PASS (7 tests, ok)
 
 - [ ] **Step 5: Commit**
 
@@ -598,6 +617,28 @@ class TestBotHandleUpdate(unittest.TestCase):
         self.assertEqual(entry["state"], checkout.STATE_AWAITING_ADDRESS)
         params = self.fake_api.last("sendMessage")
         self.assertIn("адрес", params["text"].lower())
+
+    def test_checkout_blank_address_reprompts_without_advancing(self):
+        payload = cart.build_payload({1: 1})
+        bot.carts[self.USER["id"]] = {1: 1}
+        bot.handle_update(self.TOKEN, {
+            "message": {
+                "chat": {"id": self.CHAT_ID},
+                "from": self.USER,
+                "successful_payment": {
+                    "currency": "XTR",
+                    "total_amount": 60,
+                    "invoice_payload": payload,
+                    "telegram_payment_charge_id": "charge123",
+                },
+            }
+        })
+        bot.handle_update(self.TOKEN, self._message("   "))
+        entry = bot.checkout_state[self.USER["id"]]
+        self.assertEqual(entry["state"], checkout.STATE_AWAITING_ADDRESS)
+        self.assertIsNone(entry["address"])
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("пуст", params["text"].lower())
 
     def test_full_checkout_writes_order_and_confirms(self):
         payload = cart.build_payload({1: 1})
@@ -888,13 +929,19 @@ def handle_checkout_text(token, message, entry):
     text = (message.get("text") or "").strip()
     if entry["state"] == checkout.STATE_AWAITING_ADDRESS:
         checkout.add_address(entry, text)
-        api(token, "sendMessage", chat_id=chat_id, text=ASK_PHONE_TEXT)
+        if entry["state"] == checkout.STATE_AWAITING_ADDRESS:
+            api(token, "sendMessage", chat_id=chat_id, text="Адрес не может быть пустым. Пришлите адрес пункта выдачи Ozon.")
+        else:
+            api(token, "sendMessage", chat_id=chat_id, text=ASK_PHONE_TEXT)
     elif entry["state"] == checkout.STATE_AWAITING_PHONE:
         checkout.add_phone(entry, text)
-        record = checkout.to_order_record(user_id, message["from"].get("username", ""), entry)
-        append_order(record)
-        del checkout_state[user_id]
-        api(token, "sendMessage", chat_id=chat_id, text=order_confirmation_text(record))
+        if entry["state"] == checkout.STATE_AWAITING_PHONE:
+            api(token, "sendMessage", chat_id=chat_id, text="Телефон не может быть пустым. Пришлите номер телефона, привязанный к аккаунту Ozon.")
+        else:
+            record = checkout.to_order_record(user_id, message["from"].get("username", ""), entry)
+            append_order(record)
+            del checkout_state[user_id]
+            api(token, "sendMessage", chat_id=chat_id, text=order_confirmation_text(record))
 
 
 def handle_update(token, update):
@@ -991,7 +1038,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
-Expected: PASS (7 tests, ok)
+Expected: PASS (8 tests, ok)
 
 - [ ] **Step 5: Commit**
 
