@@ -1590,6 +1590,184 @@ git commit -m "Show liter unit on products and cart quantities"
 
 ---
 
+### Task 10: Show cart contents in the message body, update in place
+
+**Added after live re-verification of Task 9:** the human partner tested
+again and reported that after adding an item twice, the order total goes
+up but "nowhere is it visible that the order has 2 liters." Root cause:
+the liters/quantity text only ever appeared inside a small inline-keyboard
+button label, and every cart change sent a brand-new `sendMessage`
+instead of updating the existing one — so the chat fills with several
+near-identical "Ваша корзина:" messages and the reader may be looking at
+a stale one. Fix: put the full cart contents in the message BODY TEXT
+(prominent, not a small button), and edit the existing message in place
+(via `editMessageText`) whenever the triggering update is a callback
+query — which always carries the message being edited — instead of
+sending a new message each time. Typed commands (`/start`, etc.) still
+get a fresh message, since there's no existing message to edit in that
+case.
+
+**Files:**
+- Modify: `bots/honey-shop/bot.py`
+- Modify: `bots/honey-shop/tests/test_bot.py`
+
+**Interfaces:**
+- Consumes: nothing new (`cart_lines`, `cart_total`, `liters_text` already exist)
+- Produces: `cart_summary_text(cart: dict) -> str`; `send_cart(token, chat_id, cart, message_id=None)` and `send_catalog(token, chat_id, message_id=None)` gain an optional `message_id` — when given, they call `editMessageText` instead of `sendMessage`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `bots/honey-shop/tests/test_bot.py`'s `TestBotHandleUpdate` class:
+
+```python
+    def test_cart_summary_text_shows_liters_and_total(self):
+        text = bot.cart_summary_text({1: 2})  # Липовый 1 литр, qty 2, 60⭐ each
+        self.assertIn("2 литра", text)
+        self.assertIn("120", text)
+
+    def test_cart_summary_text_empty_cart(self):
+        text = bot.cart_summary_text({})
+        self.assertIn("пуста", text.lower())
+
+    def test_add_to_cart_edits_existing_message_when_message_id_present(self):
+        bot.carts[self.USER["id"]] = {}
+        update = {
+            "callback_query": {
+                "id": "cbq4",
+                "from": self.USER,
+                "data": "add:1",
+                "message": {"chat": {"id": self.CHAT_ID}, "message_id": 555},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("editMessageText")
+        self.assertIsNotNone(params)
+        self.assertEqual(params["message_id"], 555)
+        self.assertIn("1 литр", params["text"])
+        self.assertIsNone(self.fake_api.last("sendMessage"))
+
+    def test_add_to_cart_sends_new_message_when_no_message_id(self):
+        bot.carts[self.USER["id"]] = {}
+        update = {
+            "callback_query": {
+                "id": "cbq5",
+                "from": self.USER,
+                "data": "add:1",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        self.assertIsNone(self.fake_api.last("editMessageText"))
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("1 литр", params["text"])
+```
+
+Note: `FakeApi.last(method)` (already defined in this test file) returns
+`None` when no call matches — no changes needed there.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: FAIL — `AttributeError: module 'bot' has no attribute 'cart_summary_text'` (and the message_id-based tests fail once that's fixed, since `editMessageText` is never called yet).
+
+- [ ] **Step 3: Add `cart_summary_text` and thread `message_id` through**
+
+Add this function in `bot.py` (near `cart_keyboard`):
+
+```python
+def cart_summary_text(cart):
+    lines = cart_lines(cart)
+    if not lines:
+        return "Корзина пуста. Откройте каталог, чтобы что-то выбрать."
+    body = "\n".join(
+        "%s — %s = %d⭐" % (p.name, liters_text(qty), subtotal) for p, qty, subtotal in lines
+    )
+    return "Ваша корзина:\n\n%s\n\nИтого: %d ⭐" % (body, cart_total(cart))
+```
+
+Replace `send_cart` and `send_catalog`:
+
+```python
+def send_catalog(token, chat_id, message_id=None):
+    text = "Выберите сорт мёда:"
+    if message_id is not None:
+        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=catalog_keyboard())
+    else:
+        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=catalog_keyboard())
+
+
+def send_cart(token, chat_id, cart, message_id=None):
+    text = cart_summary_text(cart)
+    if message_id is not None:
+        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=cart_keyboard(cart))
+    else:
+        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=cart_keyboard(cart))
+```
+
+Update `handle_callback_query` to extract the message id and pass it through on every branch that calls `send_cart`/`send_catalog` (the `checkout` branch's `send_invoice` call is unaffected — invoices are always a new message):
+
+```python
+def handle_callback_query(token, query):
+    data = query.get("data", "")
+    user_id = query.get("from", {}).get("id")
+    message = query.get("message") or {}
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
+    api(token, "answerCallbackQuery", callback_query_id=query["id"])
+    if user_id is None or chat_id is None:
+        return
+
+    cart = carts.setdefault(user_id, {})
+
+    if data.startswith("add:"):
+        add_item(cart, int(data.split(":", 1)[1]))
+        send_cart(token, chat_id, cart, message_id)
+    elif data.startswith("inc:"):
+        add_item(cart, int(data.split(":", 1)[1]))
+        send_cart(token, chat_id, cart, message_id)
+    elif data.startswith("dec:"):
+        remove_item(cart, int(data.split(":", 1)[1]))
+        send_cart(token, chat_id, cart, message_id)
+    elif data == "cart":
+        send_cart(token, chat_id, cart, message_id)
+    elif data == "catalog":
+        send_catalog(token, chat_id, message_id)
+    elif data == "clear":
+        cart.clear()
+        send_cart(token, chat_id, cart, message_id)
+    elif data == "checkout":
+        if cart_lines(cart):
+            send_invoice(token, chat_id, cart)
+        else:
+            send_cart(token, chat_id, cart, message_id)
+    # "noop" и неизвестные data — намеренно ничего не делают
+```
+
+`send_start` (used only from the `/start` text command) is unchanged — it
+has no message to edit, since the user just typed a command.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: PASS (14 tests, ok) — the 4 new tests plus all 10 previous
+ones (previous tests never set `message_id` in their fixtures, so they
+still exercise the `sendMessage` fallback path unchanged).
+
+Run the other three test files to confirm no cross-module regression:
+`py -3.14 bots/honey-shop/tests/test_catalog.py -v`,
+`py -3.14 bots/honey-shop/tests/test_cart.py -v`,
+`py -3.14 bots/honey-shop/tests/test_checkout.py -v`
+Expected: all still PASS unchanged.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bots/honey-shop/bot.py bots/honey-shop/tests/test_bot.py
+git commit -m "Show cart contents in message body; edit cart message in place"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every numbered step of "Пользовательский флоу" in
