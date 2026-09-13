@@ -1,11 +1,11 @@
 :root {
-  color-scheme: light dark;
-  --bg: #0f1115;
-  --card-bg: #1b1f27;
-  --text: #e8e8e8;
-  --muted: #8a8f98;
-  --accent: #34a1eb;
-  --accent-hover: #2688cc;
+  color-scheme: light;
+  --bg: #ffffff;
+  --card-bg: #f0f4f8;
+  --text: #1c1c1c;
+  --muted: #8b98a5;
+  --accent-gradient: linear-gradient(135deg, #2aabee, #229ed9);
+  --accent-gradient-hover: linear-gradient(135deg, #229ed9, #1e8fc4);
 }
 
 * {
@@ -55,12 +55,12 @@ h1 {
 }
 
 .bot-button--active {
-  background: var(--accent);
+  background: var(--accent-gradient);
   color: #fff;
 }
 
 .bot-button--active:hover {
-  background: var(--accent-hover);
+  background: var(--accent-gradient-hover);
 }
 
 .bot-button--inactive {
