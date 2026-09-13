@@ -94,6 +94,23 @@ class TestBotHandleUpdate(unittest.TestCase):
         self.assertEqual(params["currency"], "XTR")
         self.assertEqual(sum(p["amount"] for p in params["prices"]), 120)
 
+    def test_checkout_with_multiple_varieties_sends_single_price_item(self):
+        bot.carts[self.USER["id"]] = {1: 1, 2: 1}  # Липовый 60⭐ + Гречишный 70⭐
+        update = {
+            "callback_query": {
+                "id": "cbq7",
+                "from": self.USER,
+                "data": "checkout",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("sendInvoice")
+        self.assertEqual(len(params["prices"]), 1)
+        self.assertEqual(params["prices"][0]["amount"], 130)
+        self.assertIn("Липовый", params["description"])
+        self.assertIn("Гречишный", params["description"])
+
     def test_pre_checkout_ok_when_payload_matches(self):
         payload = cart.build_payload({1: 1})  # 60 Stars
         update = {

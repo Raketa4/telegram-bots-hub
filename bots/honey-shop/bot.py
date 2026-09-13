@@ -180,7 +180,7 @@ def send_invoice(token, chat_id, cart):
         description=", ".join("%s, %s" % (p.name, liters_text(qty)) for p, qty, _ in lines),
         payload=build_payload(cart),
         currency="XTR",
-        prices=[{"label": "%s, %s" % (p.name, liters_text(qty)), "amount": subtotal} for p, qty, subtotal in lines],
+        prices=[{"label": "Заказ мёда", "amount": cart_total(cart)}],
     )
 
 
