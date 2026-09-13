@@ -1768,6 +1768,247 @@ git commit -m "Show cart contents in message body; edit cart message in place"
 
 ---
 
+### Task 11: Drop "1 литр" from names; merge catalog and cart into one screen
+
+**Added after further live re-verification of Task 10:** two more
+requests from the human partner. (1) Remove "1 литр" from product names
+— now that quantities render via `liters_text` in the cart body (Task
+10), the unit no longer needs to be baked into the name itself; plain
+names read better next to a quantity like "1 литр"/"2 литра". (2) Adding
+a second variety currently requires leaving the cart view and going back
+to the catalog — the two screens should merge into one: every product
+always shows either an "add" button (not yet in the cart) or a ➖/➕
+stepper row (already in the cart), so nothing ever requires separate
+"catalog" vs "cart" navigation. This removes the `catalog`/`cart`
+callback actions entirely (no button will send that data anymore).
+
+**Files:**
+- Modify: `bots/honey-shop/catalog.py`
+- Modify: `bots/honey-shop/tests/test_catalog.py`
+- Modify: `bots/honey-shop/bot.py`
+- Modify: `bots/honey-shop/tests/test_bot.py`
+
+**Interfaces:**
+- Consumes: nothing new
+- Produces: `shop_keyboard(cart: dict) -> dict`, `shop_text(cart: dict) -> str`, `send_shop(token, chat_id, cart, message_id=None)` — these REPLACE `catalog_keyboard`, `cart_keyboard`, `cart_summary_text`, `send_catalog`, `send_cart` (all four removed). `send_start(token, chat_id, cart)` gains a required `cart` parameter (was `send_start(token, chat_id)`).
+
+- [ ] **Step 1: Write the failing tests**
+
+Update `bots/honey-shop/tests/test_catalog.py`'s `test_known_prices` and `test_get_product_found` back to plain names:
+
+```python
+    def test_known_prices(self):
+        prices = {p.name: p.price for p in CATALOG}
+        self.assertEqual(
+            prices,
+            {"Липовый": 60, "Гречишный": 70, "Цветочный": 55, "Разнотравье": 65},
+        )
+
+    def test_get_product_found(self):
+        product = get_product(1)
+        self.assertEqual(product.name, "Липовый")
+```
+
+In `bots/honey-shop/tests/test_bot.py`, replace the two tests that call
+the now-removed `cart_summary_text`:
+
+```python
+    def test_shop_text_shows_liters_and_total(self):
+        text = bot.shop_text({1: 2})  # Липовый, qty 2, 60⭐ each
+        self.assertIn("2 литра", text)
+        self.assertIn("120", text)
+
+    def test_shop_text_empty_cart(self):
+        text = bot.shop_text({})
+        self.assertIn("Выберите", text)
+```
+
+Replace `test_cart_shows_liters_not_multiplier` (it used the now-removed
+`"cart"` callback data) with a version driven by `"add:"`, which is the
+only way to reach the shop view now:
+
+```python
+    def test_shop_view_shows_liters_not_multiplier(self):
+        bot.carts[self.USER["id"]] = {1: 1}
+        update = {
+            "callback_query": {
+                "id": "cbq3",
+                "from": self.USER,
+                "data": "add:1",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("2 литра", params["text"])
+        self.assertNotIn("×2", params["text"])
+```
+
+Add a test proving a second variety can be added without any
+catalog/cart navigation in between:
+
+```python
+    def test_can_add_second_variety_directly_from_shop_view(self):
+        bot.carts[self.USER["id"]] = {1: 1}
+        update = {
+            "callback_query": {
+                "id": "cbq6",
+                "from": self.USER,
+                "data": "add:2",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        self.assertEqual(bot.carts[self.USER["id"]], {1: 1, 2: 1})
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("Гречишный", params["text"])
+        self.assertIn("Липовый", params["text"])
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `py -3.14 bots/honey-shop/tests/test_catalog.py -v`
+Expected: FAIL — names still have "1 литр".
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: FAIL — `AttributeError: module 'bot' has no attribute 'shop_text'`, and the callback-data tests fail since `"catalog"`/`"cart"` handling hasn't changed yet.
+
+- [ ] **Step 3: Update `catalog.py`**
+
+```python
+CATALOG = [
+    Product(1, "Липовый", 60),
+    Product(2, "Гречишный", 70),
+    Product(3, "Цветочный", 55),
+    Product(4, "Разнотравье", 65),
+]
+```
+
+- [ ] **Step 4: Replace the keyboard/view functions and callback routing in `bot.py`**
+
+Remove `catalog_keyboard`, `cart_keyboard`, `cart_summary_text`,
+`send_catalog`, `send_cart` entirely. Replace them with:
+
+```python
+def shop_keyboard(cart):
+    rows = []
+    for product in CATALOG:
+        qty = cart.get(product.id, 0)
+        if qty > 0:
+            subtotal = product.price * qty
+            rows.append([
+                {"text": "➖", "callback_data": "dec:%d" % product.id},
+                {"text": "%s, %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
+                {"text": "➕", "callback_data": "inc:%d" % product.id},
+            ])
+        else:
+            rows.append([{"text": "%s — %d ⭐" % (product.name, product.price), "callback_data": "add:%d" % product.id}])
+    if cart:
+        rows.append([{"text": "✅ Оформить заказ (%d ⭐)" % cart_total(cart), "callback_data": "checkout"}])
+        rows.append([{"text": "🗑 Очистить корзину", "callback_data": "clear"}])
+    return {"inline_keyboard": rows}
+
+
+def shop_text(cart):
+    lines = cart_lines(cart)
+    if not lines:
+        return "Выберите сорт мёда:"
+    body = "\n".join(
+        "%s — %s = %d⭐" % (p.name, liters_text(qty), subtotal) for p, qty, subtotal in lines
+    )
+    return "Ваша корзина:\n\n%s\n\nИтого: %d ⭐" % (body, cart_total(cart))
+
+
+def send_shop(token, chat_id, cart, message_id=None):
+    text = shop_text(cart)
+    if message_id is not None:
+        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=shop_keyboard(cart))
+    else:
+        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=shop_keyboard(cart))
+```
+
+Update `send_start` to take the cart and use `shop_keyboard`:
+
+```python
+def send_start(token, chat_id, cart):
+    api(token, "sendMessage", chat_id=chat_id, text=START_TEXT, reply_markup=shop_keyboard(cart))
+```
+
+Replace `handle_callback_query` (drops the `catalog`/`cart` branches,
+renames the `send_cart(...)` calls to `send_shop(...)`):
+
+```python
+def handle_callback_query(token, query):
+    data = query.get("data", "")
+    user_id = query.get("from", {}).get("id")
+    message = query.get("message") or {}
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
+    api(token, "answerCallbackQuery", callback_query_id=query["id"])
+    if user_id is None or chat_id is None:
+        return
+
+    cart = carts.setdefault(user_id, {})
+
+    if data.startswith("add:"):
+        add_item(cart, int(data.split(":", 1)[1]))
+        send_shop(token, chat_id, cart, message_id)
+    elif data.startswith("inc:"):
+        add_item(cart, int(data.split(":", 1)[1]))
+        send_shop(token, chat_id, cart, message_id)
+    elif data.startswith("dec:"):
+        remove_item(cart, int(data.split(":", 1)[1]))
+        send_shop(token, chat_id, cart, message_id)
+    elif data == "clear":
+        cart.clear()
+        send_shop(token, chat_id, cart, message_id)
+    elif data == "checkout":
+        if cart_lines(cart):
+            send_invoice(token, chat_id, cart)
+        else:
+            send_shop(token, chat_id, cart, message_id)
+    # "noop" и неизвестные data — намеренно ничего не делают
+```
+
+Update the two call sites of `send_start` inside `handle_update` to pass
+the user's cart (both are in the text-message branch, where `user_id` is
+already computed as `message.get("from", {}).get("id")`):
+
+```python
+    elif text.startswith("/start"):
+        send_start(token, chat_id, carts.setdefault(user_id, {}))
+    elif user_id in checkout_state:
+        handle_checkout_text(token, message, checkout_state[user_id])
+    else:
+        send_start(token, chat_id, carts.setdefault(user_id, {}))
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `py -3.14 bots/honey-shop/tests/test_catalog.py -v`
+Expected: PASS (4 tests, ok)
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: PASS (15 tests, ok) — 14 before this task, minus the 3 tests
+this task replaces (`test_cart_summary_text_shows_liters_and_total`,
+`test_cart_summary_text_empty_cart`, `test_cart_shows_liters_not_multiplier`),
+plus their 3 renamed replacements, plus 1 new test
+(`test_can_add_second_variety_directly_from_shop_view`).
+
+Run the other two test files to confirm no regression:
+`py -3.14 bots/honey-shop/tests/test_cart.py -v` and
+`py -3.14 bots/honey-shop/tests/test_checkout.py -v`
+Expected: both still PASS unchanged.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add bots/honey-shop/catalog.py bots/honey-shop/tests/test_catalog.py bots/honey-shop/bot.py bots/honey-shop/tests/test_bot.py
+git commit -m "Merge catalog and cart into one shop view; drop liter suffix from names"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every numbered step of "Пользовательский флоу" in
