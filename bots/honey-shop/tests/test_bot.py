@@ -216,6 +216,47 @@ class TestBotHandleUpdate(unittest.TestCase):
         self.assertIn("2 литра", keyboard_text)
         self.assertNotIn("×2", keyboard_text)
 
+    def test_cart_summary_text_shows_liters_and_total(self):
+        text = bot.cart_summary_text({1: 2})  # Липовый 1 литр, qty 2, 60⭐ each
+        self.assertIn("2 литра", text)
+        self.assertIn("120", text)
+
+    def test_cart_summary_text_empty_cart(self):
+        text = bot.cart_summary_text({})
+        self.assertIn("пуста", text.lower())
+
+    def test_add_to_cart_edits_existing_message_when_message_id_present(self):
+        bot.carts[self.USER["id"]] = {}
+        update = {
+            "callback_query": {
+                "id": "cbq4",
+                "from": self.USER,
+                "data": "add:1",
+                "message": {"chat": {"id": self.CHAT_ID}, "message_id": 555},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("editMessageText")
+        self.assertIsNotNone(params)
+        self.assertEqual(params["message_id"], 555)
+        self.assertIn("1 литр", params["text"])
+        self.assertIsNone(self.fake_api.last("sendMessage"))
+
+    def test_add_to_cart_sends_new_message_when_no_message_id(self):
+        bot.carts[self.USER["id"]] = {}
+        update = {
+            "callback_query": {
+                "id": "cbq5",
+                "from": self.USER,
+                "data": "add:1",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        self.assertIsNone(self.fake_api.last("editMessageText"))
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("1 литр", params["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

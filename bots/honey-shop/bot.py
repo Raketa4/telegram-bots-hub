@@ -153,20 +153,34 @@ def cart_keyboard(cart):
     return {"inline_keyboard": rows}
 
 
+def cart_summary_text(cart):
+    lines = cart_lines(cart)
+    if not lines:
+        return "Корзина пуста. Откройте каталог, чтобы что-то выбрать."
+    body = "\n".join(
+        "%s — %s = %d⭐" % (p.name, liters_text(qty), subtotal) for p, qty, subtotal in lines
+    )
+    return "Ваша корзина:\n\n%s\n\nИтого: %d ⭐" % (body, cart_total(cart))
+
+
 def send_start(token, chat_id):
     api(token, "sendMessage", chat_id=chat_id, text=START_TEXT, reply_markup=catalog_keyboard())
 
 
-def send_catalog(token, chat_id):
-    api(token, "sendMessage", chat_id=chat_id, text="Выберите сорт мёда:", reply_markup=catalog_keyboard())
-
-
-def send_cart(token, chat_id, cart):
-    if not cart_lines(cart):
-        text = "Корзина пуста. Откройте каталог, чтобы что-то выбрать."
+def send_catalog(token, chat_id, message_id=None):
+    text = "Выберите сорт мёда:"
+    if message_id is not None:
+        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=catalog_keyboard())
     else:
-        text = "Ваша корзина:"
-    api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=cart_keyboard(cart))
+        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=catalog_keyboard())
+
+
+def send_cart(token, chat_id, cart, message_id=None):
+    text = cart_summary_text(cart)
+    if message_id is not None:
+        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=cart_keyboard(cart))
+    else:
+        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=cart_keyboard(cart))
 
 
 def send_invoice(token, chat_id, cart):
@@ -216,7 +230,9 @@ def handle_pre_checkout(token, pcq):
 def handle_callback_query(token, query):
     data = query.get("data", "")
     user_id = query.get("from", {}).get("id")
-    chat_id = (query.get("message") or {}).get("chat", {}).get("id")
+    message = query.get("message") or {}
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
     api(token, "answerCallbackQuery", callback_query_id=query["id"])
     if user_id is None or chat_id is None:
         return
@@ -225,25 +241,25 @@ def handle_callback_query(token, query):
 
     if data.startswith("add:"):
         add_item(cart, int(data.split(":", 1)[1]))
-        send_cart(token, chat_id, cart)
+        send_cart(token, chat_id, cart, message_id)
     elif data.startswith("inc:"):
         add_item(cart, int(data.split(":", 1)[1]))
-        send_cart(token, chat_id, cart)
+        send_cart(token, chat_id, cart, message_id)
     elif data.startswith("dec:"):
         remove_item(cart, int(data.split(":", 1)[1]))
-        send_cart(token, chat_id, cart)
+        send_cart(token, chat_id, cart, message_id)
     elif data == "cart":
-        send_cart(token, chat_id, cart)
+        send_cart(token, chat_id, cart, message_id)
     elif data == "catalog":
-        send_catalog(token, chat_id)
+        send_catalog(token, chat_id, message_id)
     elif data == "clear":
         cart.clear()
-        send_cart(token, chat_id, cart)
+        send_cart(token, chat_id, cart, message_id)
     elif data == "checkout":
         if cart_lines(cart):
             send_invoice(token, chat_id, cart)
         else:
-            send_cart(token, chat_id, cart)
+            send_cart(token, chat_id, cart, message_id)
     # "noop" и неизвестные data — намеренно ничего не делают
 
 
