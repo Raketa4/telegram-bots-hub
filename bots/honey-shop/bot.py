@@ -129,58 +129,45 @@ def _who(obj):
     return "%s (id %s)" % (name, user.get("id", "?"))
 
 
-def catalog_keyboard():
-    rows = [
-        [{"text": "%s — %d ⭐" % (p.name, p.price), "callback_data": "add:%d" % p.id}]
-        for p in CATALOG
-    ]
-    rows.append([{"text": "🧺 Корзина", "callback_data": "cart"}])
-    return {"inline_keyboard": rows}
-
-
-def cart_keyboard(cart):
+def shop_keyboard(cart):
     rows = []
-    for product, qty, subtotal in cart_lines(cart):
-        rows.append([
-            {"text": "➖", "callback_data": "dec:%d" % product.id},
-            {"text": "%s, %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
-            {"text": "➕", "callback_data": "inc:%d" % product.id},
-        ])
+    for product in CATALOG:
+        qty = cart.get(product.id, 0)
+        if qty > 0:
+            subtotal = product.price * qty
+            rows.append([
+                {"text": "➖", "callback_data": "dec:%d" % product.id},
+                {"text": "%s, %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
+                {"text": "➕", "callback_data": "inc:%d" % product.id},
+            ])
+        else:
+            rows.append([{"text": "%s — %d ⭐" % (product.name, product.price), "callback_data": "add:%d" % product.id}])
     if cart:
         rows.append([{"text": "✅ Оформить заказ (%d ⭐)" % cart_total(cart), "callback_data": "checkout"}])
         rows.append([{"text": "🗑 Очистить корзину", "callback_data": "clear"}])
-    rows.append([{"text": "🛍 Каталог", "callback_data": "catalog"}])
     return {"inline_keyboard": rows}
 
 
-def cart_summary_text(cart):
+def shop_text(cart):
     lines = cart_lines(cart)
     if not lines:
-        return "Корзина пуста. Откройте каталог, чтобы что-то выбрать."
+        return "Выберите сорт мёда:"
     body = "\n".join(
         "%s — %s = %d⭐" % (p.name, liters_text(qty), subtotal) for p, qty, subtotal in lines
     )
     return "Ваша корзина:\n\n%s\n\nИтого: %d ⭐" % (body, cart_total(cart))
 
 
-def send_start(token, chat_id):
-    api(token, "sendMessage", chat_id=chat_id, text=START_TEXT, reply_markup=catalog_keyboard())
-
-
-def send_catalog(token, chat_id, message_id=None):
-    text = "Выберите сорт мёда:"
+def send_shop(token, chat_id, cart, message_id=None):
+    text = shop_text(cart)
     if message_id is not None:
-        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=catalog_keyboard())
+        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=shop_keyboard(cart))
     else:
-        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=catalog_keyboard())
+        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=shop_keyboard(cart))
 
 
-def send_cart(token, chat_id, cart, message_id=None):
-    text = cart_summary_text(cart)
-    if message_id is not None:
-        api(token, "editMessageText", chat_id=chat_id, message_id=message_id, text=text, reply_markup=cart_keyboard(cart))
-    else:
-        api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=cart_keyboard(cart))
+def send_start(token, chat_id, cart):
+    api(token, "sendMessage", chat_id=chat_id, text=START_TEXT, reply_markup=shop_keyboard(cart))
 
 
 def send_invoice(token, chat_id, cart):
@@ -241,25 +228,21 @@ def handle_callback_query(token, query):
 
     if data.startswith("add:"):
         add_item(cart, int(data.split(":", 1)[1]))
-        send_cart(token, chat_id, cart, message_id)
+        send_shop(token, chat_id, cart, message_id)
     elif data.startswith("inc:"):
         add_item(cart, int(data.split(":", 1)[1]))
-        send_cart(token, chat_id, cart, message_id)
+        send_shop(token, chat_id, cart, message_id)
     elif data.startswith("dec:"):
         remove_item(cart, int(data.split(":", 1)[1]))
-        send_cart(token, chat_id, cart, message_id)
-    elif data == "cart":
-        send_cart(token, chat_id, cart, message_id)
-    elif data == "catalog":
-        send_catalog(token, chat_id, message_id)
+        send_shop(token, chat_id, cart, message_id)
     elif data == "clear":
         cart.clear()
-        send_cart(token, chat_id, cart, message_id)
+        send_shop(token, chat_id, cart, message_id)
     elif data == "checkout":
         if cart_lines(cart):
             send_invoice(token, chat_id, cart)
         else:
-            send_cart(token, chat_id, cart, message_id)
+            send_shop(token, chat_id, cart, message_id)
     # "noop" и неизвестные data — намеренно ничего не делают
 
 
@@ -325,11 +308,11 @@ def handle_update(token, update):
     elif text.startswith("/paysupport"):
         api(token, "sendMessage", chat_id=chat_id, text=PAYSUPPORT_TEXT)
     elif text.startswith("/start"):
-        send_start(token, chat_id)
+        send_start(token, chat_id, carts.setdefault(user_id, {}))
     elif user_id in checkout_state:
         handle_checkout_text(token, message, checkout_state[user_id])
     else:
-        send_start(token, chat_id)
+        send_start(token, chat_id, carts.setdefault(user_id, {}))
 
 
 def main():

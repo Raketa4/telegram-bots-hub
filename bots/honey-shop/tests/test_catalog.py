@@ -16,17 +16,12 @@ class TestCatalog(unittest.TestCase):
         prices = {p.name: p.price for p in CATALOG}
         self.assertEqual(
             prices,
-            {
-                "Липовый 1 литр": 60,
-                "Гречишный 1 литр": 70,
-                "Цветочный 1 литр": 55,
-                "Разнотравье 1 литр": 65,
-            },
+            {"Липовый": 60, "Гречишный": 70, "Цветочный": 55, "Разнотравье": 65},
         )
 
     def test_get_product_found(self):
         product = get_product(1)
-        self.assertEqual(product.name, "Липовый 1 литр")
+        self.assertEqual(product.name, "Липовый")
 
     def test_get_product_missing(self):
         self.assertIsNone(get_product(999))

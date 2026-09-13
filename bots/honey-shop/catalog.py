@@ -11,10 +11,10 @@ class Product:
 
 
 CATALOG = [
-    Product(1, "Липовый 1 литр", 60),
-    Product(2, "Гречишный 1 литр", 70),
-    Product(3, "Цветочный 1 литр", 55),
-    Product(4, "Разнотравье 1 литр", 65),
+    Product(1, "Липовый", 60),
+    Product(2, "Гречишный", 70),
+    Product(3, "Цветочный", 55),
+    Product(4, "Разнотравье", 65),
 ]
 
 _BY_ID = {p.id: p for p in CATALOG}

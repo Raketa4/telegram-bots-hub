@@ -200,30 +200,45 @@ class TestBotHandleUpdate(unittest.TestCase):
         self.assertEqual(bot.liters_text(11), "11 литров")
         self.assertEqual(bot.liters_text(21), "21 литр")
 
-    def test_cart_shows_liters_not_multiplier(self):
-        bot.carts[self.USER["id"]] = {1: 2}
+    def test_shop_view_shows_liters_not_multiplier(self):
+        bot.carts[self.USER["id"]] = {1: 1}
         update = {
             "callback_query": {
                 "id": "cbq3",
                 "from": self.USER,
-                "data": "cart",
+                "data": "add:1",
                 "message": {"chat": {"id": self.CHAT_ID}},
             }
         }
         bot.handle_update(self.TOKEN, update)
         params = self.fake_api.last("sendMessage")
-        keyboard_text = str(params["reply_markup"])
-        self.assertIn("2 литра", keyboard_text)
-        self.assertNotIn("×2", keyboard_text)
+        self.assertIn("2 литра", params["text"])
+        self.assertNotIn("×2", params["text"])
 
-    def test_cart_summary_text_shows_liters_and_total(self):
-        text = bot.cart_summary_text({1: 2})  # Липовый 1 литр, qty 2, 60⭐ each
+    def test_shop_text_shows_liters_and_total(self):
+        text = bot.shop_text({1: 2})  # Липовый, qty 2, 60⭐ each
         self.assertIn("2 литра", text)
         self.assertIn("120", text)
 
-    def test_cart_summary_text_empty_cart(self):
-        text = bot.cart_summary_text({})
-        self.assertIn("пуста", text.lower())
+    def test_shop_text_empty_cart(self):
+        text = bot.shop_text({})
+        self.assertIn("Выберите", text)
+
+    def test_can_add_second_variety_directly_from_shop_view(self):
+        bot.carts[self.USER["id"]] = {1: 1}
+        update = {
+            "callback_query": {
+                "id": "cbq6",
+                "from": self.USER,
+                "data": "add:2",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        self.assertEqual(bot.carts[self.USER["id"]], {1: 1, 2: 1})
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("Гречишный", params["text"])
+        self.assertIn("Липовый", params["text"])
 
     def test_add_to_cart_edits_existing_message_when_message_id_present(self):
         bot.carts[self.USER["id"]] = {}
