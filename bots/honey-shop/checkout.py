@@ -24,13 +24,19 @@ def start_checkout(cart):
 
 
 def add_address(entry, text):
-    entry["address"] = text.strip()
+    text = text.strip()
+    if not text:
+        return entry  # blank input: stay in AWAITING_ADDRESS, caller re-prompts
+    entry["address"] = text
     entry["state"] = STATE_AWAITING_PHONE
     return entry
 
 
 def add_phone(entry, text):
-    entry["phone"] = text.strip()
+    text = text.strip()
+    if not text:
+        return entry  # blank input: stay in AWAITING_PHONE, caller re-prompts
+    entry["phone"] = text
     entry["state"] = STATE_NONE
     return entry
 

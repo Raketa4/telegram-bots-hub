@@ -49,6 +49,19 @@ class TestCheckout(unittest.TestCase):
         self.assertEqual(record["phone"], "+79990001122")
         self.assertIn("created_at", record)
 
+    def test_add_address_blank_does_not_advance(self):
+        entry = checkout.start_checkout({1: 1})
+        checkout.add_address(entry, "   ")
+        self.assertEqual(entry["state"], checkout.STATE_AWAITING_ADDRESS)
+        self.assertIsNone(entry["address"])
+
+    def test_add_phone_blank_does_not_advance(self):
+        entry = checkout.start_checkout({1: 1})
+        checkout.add_address(entry, "ПВЗ Ozon")
+        checkout.add_phone(entry, "   ")
+        self.assertEqual(entry["state"], checkout.STATE_AWAITING_PHONE)
+        self.assertIsNone(entry["phone"])
+
 
 if __name__ == "__main__":
     unittest.main()
