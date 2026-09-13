@@ -68,6 +68,13 @@ class TestCart(unittest.TestCase):
         self.assertEqual(parse_payload("not json"), [])
         self.assertEqual(parse_payload("{}"), [])
 
+    def test_parse_payload_non_dict_json(self):
+        # Valid JSON that decodes to non-dict should return []
+        self.assertEqual(parse_payload("[]"), [])
+        self.assertEqual(parse_payload("null"), [])
+        self.assertEqual(parse_payload("123"), [])
+        self.assertEqual(parse_payload('"str"'), [])
+
 
 if __name__ == "__main__":
     unittest.main()

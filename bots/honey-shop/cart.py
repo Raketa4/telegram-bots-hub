@@ -50,6 +50,8 @@ def build_payload(cart):
 def parse_payload(payload):
     try:
         data = json.loads(payload)
+        if not isinstance(data, dict):
+            return []
         return [(int(pid), int(qty)) for pid, qty in data.get("items", [])]
     except (ValueError, TypeError, KeyError):
         return []
