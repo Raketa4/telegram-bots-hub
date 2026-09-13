@@ -1410,6 +1410,186 @@ GitHub Pages rebuilds automatically from `main`.
 
 ---
 
+### Task 9: Show liter unit on products and cart quantities
+
+**Added after live verification (Task 7):** the human partner tested the
+bot against the real Bot API and asked for two display changes before
+Task 8: (1) each product name should literally include its unit size
+("Липовый 1 литр" instead of "Липовый"); (2) the cart should show
+quantity in liters with correct Russian pluralization ("2 литра") instead
+of a bare multiplier ("×2"). Pricing, catalog IDs, and all state-machine
+logic are unchanged — this is a presentation-only change confined to the
+product names (Task 1) and the Telegram-facing text in `bot.py` (Task 4).
+
+**Files:**
+- Modify: `bots/honey-shop/catalog.py`
+- Modify: `bots/honey-shop/tests/test_catalog.py`
+- Modify: `bots/honey-shop/bot.py`
+- Modify: `bots/honey-shop/tests/test_bot.py`
+
+**Interfaces:**
+- Consumes: nothing new
+- Produces: `liters_text(qty: int) -> str` (in `bot.py`) — e.g. `liters_text(1) == "1 литр"`, `liters_text(2) == "2 литра"`, `liters_text(5) == "5 литров"`. Used everywhere a quantity is shown to the user (cart line, invoice description/price labels, order confirmation).
+
+- [ ] **Step 1: Write the failing tests**
+
+Update `bots/honey-shop/tests/test_catalog.py`'s existing `test_known_prices` and `test_get_product_found`:
+
+```python
+    def test_known_prices(self):
+        prices = {p.name: p.price for p in CATALOG}
+        self.assertEqual(
+            prices,
+            {
+                "Липовый 1 литр": 60,
+                "Гречишный 1 литр": 70,
+                "Цветочный 1 литр": 55,
+                "Разнотравье 1 литр": 65,
+            },
+        )
+
+    def test_get_product_found(self):
+        product = get_product(1)
+        self.assertEqual(product.name, "Липовый 1 литр")
+```
+
+Add to `bots/honey-shop/tests/test_bot.py`'s `TestBotHandleUpdate` class:
+
+```python
+    def test_liters_text_pluralization(self):
+        self.assertEqual(bot.liters_text(1), "1 литр")
+        self.assertEqual(bot.liters_text(2), "2 литра")
+        self.assertEqual(bot.liters_text(4), "4 литра")
+        self.assertEqual(bot.liters_text(5), "5 литров")
+        self.assertEqual(bot.liters_text(11), "11 литров")
+        self.assertEqual(bot.liters_text(21), "21 литр")
+
+    def test_cart_shows_liters_not_multiplier(self):
+        bot.carts[self.USER["id"]] = {1: 2}
+        update = {
+            "callback_query": {
+                "id": "cbq3",
+                "from": self.USER,
+                "data": "cart",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("sendMessage")
+        keyboard_text = str(params["reply_markup"])
+        self.assertIn("2 литра", keyboard_text)
+        self.assertNotIn("×2", keyboard_text)
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `py -3.14 bots/honey-shop/tests/test_catalog.py -v`
+Expected: FAIL — `test_known_prices` and `test_get_product_found` assert
+against names catalog.py doesn't produce yet.
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: FAIL — `AttributeError: module 'bot' has no attribute 'liters_text'`.
+
+- [ ] **Step 3: Update `catalog.py`**
+
+```python
+CATALOG = [
+    Product(1, "Липовый 1 литр", 60),
+    Product(2, "Гречишный 1 литр", 70),
+    Product(3, "Цветочный 1 литр", 55),
+    Product(4, "Разнотравье 1 литр", 65),
+]
+```
+
+- [ ] **Step 4: Add `liters_text` to `bot.py` and use it everywhere a quantity is shown**
+
+Add near the top of `bot.py` (after the imports):
+
+```python
+def _liters_word(qty):
+    n = abs(qty) % 100
+    if 11 <= n <= 14:
+        return "литров"
+    last_digit = n % 10
+    if last_digit == 1:
+        return "литр"
+    if 2 <= last_digit <= 4:
+        return "литра"
+    return "литров"
+
+
+def liters_text(qty):
+    return "%d %s" % (qty, _liters_word(qty))
+```
+
+In `cart_keyboard`, replace the multiplier-style line with a liters-based one:
+
+```python
+def cart_keyboard(cart):
+    rows = []
+    for product, qty, subtotal in cart_lines(cart):
+        rows.append([
+            {"text": "➖", "callback_data": "dec:%d" % product.id},
+            {"text": "%s, %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
+            {"text": "➕", "callback_data": "inc:%d" % product.id},
+        ])
+    if cart:
+        rows.append([{"text": "✅ Оформить заказ (%d ⭐)" % cart_total(cart), "callback_data": "checkout"}])
+        rows.append([{"text": "🗑 Очистить корзину", "callback_data": "clear"}])
+    rows.append([{"text": "🛍 Каталог", "callback_data": "catalog"}])
+    return {"inline_keyboard": rows}
+```
+
+In `send_invoice`, replace the `"%s x%d"` formatting in both `description` and `prices`:
+
+```python
+def send_invoice(token, chat_id, cart):
+    lines = cart_lines(cart)
+    api(
+        token,
+        "sendInvoice",
+        chat_id=chat_id,
+        title="Заказ мёда (тест)",
+        description=", ".join("%s, %s" % (p.name, liters_text(qty)) for p, qty, _ in lines),
+        payload=build_payload(cart),
+        currency="XTR",
+        prices=[{"label": "%s, %s" % (p.name, liters_text(qty)), "amount": subtotal} for p, qty, subtotal in lines],
+    )
+```
+
+In `order_confirmation_text`, replace the `"- %s x%d"` line formatting:
+
+```python
+def order_confirmation_text(record):
+    lines_text = "\n".join("- %s, %s" % (item["name"], liters_text(item["qty"])) for item in record["items"])
+    return (
+        "✅ Заказ оформлен (⭐ %d Stars).\n\n%s\n\nПВЗ Ozon: %s\nТелефон: %s\n\n"
+        "⚠️ Напоминаем: это тестовый магазин, доставка не выполняется по-настоящему."
+    ) % (record["total_stars"], lines_text, record["pvz_address"], record["phone"])
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `py -3.14 bots/honey-shop/tests/test_catalog.py -v`
+Expected: PASS (4 tests, ok)
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: PASS (10 tests, ok)
+
+Run the full suite once to confirm no cross-module regressions:
+`py -3.14 bots/honey-shop/tests/test_cart.py -v` and
+`py -3.14 bots/honey-shop/tests/test_checkout.py -v`
+Expected: both still PASS unchanged (neither references product names).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add bots/honey-shop/catalog.py bots/honey-shop/tests/test_catalog.py bots/honey-shop/bot.py bots/honey-shop/tests/test_bot.py
+git commit -m "Show liter unit on products and cart quantities"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every numbered step of "Пользовательский флоу" in
