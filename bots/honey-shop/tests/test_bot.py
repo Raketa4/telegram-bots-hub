@@ -192,6 +192,30 @@ class TestBotHandleUpdate(unittest.TestCase):
         params = self.fake_api.last("sendMessage")
         self.assertIn("тест", params["text"].lower())
 
+    def test_liters_text_pluralization(self):
+        self.assertEqual(bot.liters_text(1), "1 литр")
+        self.assertEqual(bot.liters_text(2), "2 литра")
+        self.assertEqual(bot.liters_text(4), "4 литра")
+        self.assertEqual(bot.liters_text(5), "5 литров")
+        self.assertEqual(bot.liters_text(11), "11 литров")
+        self.assertEqual(bot.liters_text(21), "21 литр")
+
+    def test_cart_shows_liters_not_multiplier(self):
+        bot.carts[self.USER["id"]] = {1: 2}
+        update = {
+            "callback_query": {
+                "id": "cbq3",
+                "from": self.USER,
+                "data": "cart",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("sendMessage")
+        keyboard_text = str(params["reply_markup"])
+        self.assertIn("2 литра", keyboard_text)
+        self.assertNotIn("×2", keyboard_text)
+
 
 if __name__ == "__main__":
     unittest.main()

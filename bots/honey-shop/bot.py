@@ -20,6 +20,23 @@ from catalog import CATALOG, get_product
 from cart import add_item, build_payload, cart_lines, cart_total, parse_payload, remove_item, total_for_items
 import checkout
 
+
+def _liters_word(qty):
+    n = abs(qty) % 100
+    if 11 <= n <= 14:
+        return "литров"
+    last_digit = n % 10
+    if last_digit == 1:
+        return "литр"
+    if 2 <= last_digit <= 4:
+        return "литра"
+    return "литров"
+
+
+def liters_text(qty):
+    return "%d %s" % (qty, _liters_word(qty))
+
+
 API_URL = "https://api.telegram.org/bot{token}/{method}"
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.log")
 LOG_MAX_BYTES = 1_000_000
@@ -126,7 +143,7 @@ def cart_keyboard(cart):
     for product, qty, subtotal in cart_lines(cart):
         rows.append([
             {"text": "➖", "callback_data": "dec:%d" % product.id},
-            {"text": "%s ×%d = %d⭐" % (product.name, qty, subtotal), "callback_data": "noop"},
+            {"text": "%s, %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
             {"text": "➕", "callback_data": "inc:%d" % product.id},
         ])
     if cart:
@@ -159,10 +176,10 @@ def send_invoice(token, chat_id, cart):
         "sendInvoice",
         chat_id=chat_id,
         title="Заказ мёда (тест)",
-        description=", ".join("%s x%d" % (p.name, qty) for p, qty, _ in lines),
+        description=", ".join("%s, %s" % (p.name, liters_text(qty)) for p, qty, _ in lines),
         payload=build_payload(cart),
         currency="XTR",
-        prices=[{"label": "%s x%d" % (p.name, qty), "amount": subtotal} for p, qty, subtotal in lines],
+        prices=[{"label": "%s, %s" % (p.name, liters_text(qty)), "amount": subtotal} for p, qty, subtotal in lines],
     )
 
 
@@ -172,7 +189,7 @@ def append_order(record):
 
 
 def order_confirmation_text(record):
-    lines_text = "\n".join("- %s x%d" % (item["name"], item["qty"]) for item in record["items"])
+    lines_text = "\n".join("- %s, %s" % (item["name"], liters_text(item["qty"])) for item in record["items"])
     return (
         "✅ Заказ оформлен (⭐ %d Stars).\n\n%s\n\nПВЗ Ozon: %s\nТелефон: %s\n\n"
         "⚠️ Напоминаем: это тестовый магазин, доставка не выполняется по-настоящему."
