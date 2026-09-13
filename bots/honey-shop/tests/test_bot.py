@@ -272,6 +272,11 @@ class TestBotHandleUpdate(unittest.TestCase):
         params = self.fake_api.last("sendMessage")
         self.assertIn("1 литр", params["text"])
 
+    def test_start_text_does_not_mention_separate_catalog(self):
+        bot.handle_update(self.TOKEN, self._message("/start"))
+        params = self.fake_api.last("sendMessage")
+        self.assertNotIn("каталог", params["text"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()
