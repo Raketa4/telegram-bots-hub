@@ -1,5 +1,5 @@
 const BOTS = [
-  { id: 1, title: "Кнопка 1", username: null },
+  { id: 1, title: "Магазин мёда (тест)", username: "honey_shop_urals_bot" },
   { id: 2, title: "Кнопка 2", username: null },
   { id: 3, title: "Кнопка 3", username: null },
   { id: 4, title: "Кнопка 4", username: null },
