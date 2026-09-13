@@ -2009,6 +2009,76 @@ git commit -m "Merge catalog and cart into one shop view; drop liter suffix from
 
 ---
 
+### Task 12: Fix stale "каталог" copy after the Task 11 merge
+
+**Added after Task 11's review:** the reviewer flagged that `HELP_TEXT`,
+the `/start` command's description in `setMyCommands`, and `START_TEXT`'s
+closing sentence still talk about a separate "каталог" to "open" — stale
+now that Task 11 merged catalog and cart into one always-visible shop
+view attached to the same message. Text-only fix, no logic changes.
+
+**Files:**
+- Modify: `bots/honey-shop/bot.py`
+
+**Interfaces:** none (string constants only)
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `bots/honey-shop/tests/test_bot.py`'s `TestBotHandleUpdate` class:
+
+```python
+    def test_start_text_does_not_mention_separate_catalog(self):
+        bot.handle_update(self.TOKEN, self._message("/start"))
+        params = self.fake_api.last("sendMessage")
+        self.assertNotIn("каталог", params["text"].lower())
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: FAIL — `START_TEXT` still contains "каталог".
+
+- [ ] **Step 3: Update the three copy strings in `bot.py`**
+
+```python
+START_TEXT = (
+    "⚠️ Это тестовый магазин. Реальный товар не отправляется.\n\n"
+    "Здесь можно \"купить\" мёд за настоящие Telegram Stars, чтобы "
+    "посмотреть, как работает витрина, корзина и оплата.\n\n"
+    "Выберите сорт мёда ниже."
+)
+
+HELP_TEXT = (
+    "Тестовый магазин мёда.\n\n"
+    "/start — открыть магазин\n"
+    "/paysupport — вопросы по оплате и возвратам\n\n"
+    "⚠️ Это тестовый магазин, доставка не выполняется по-настоящему."
+)
+```
+
+In `main()`'s `setMyCommands` call, change the `start` command's
+description:
+
+```python
+            {"command": "start", "description": "Открыть магазин"},
+```
+
+`PAYSUPPORT_TEXT` is unrelated and stays unchanged.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: PASS (16 tests, ok)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bots/honey-shop/bot.py bots/honey-shop/tests/test_bot.py
+git commit -m "Fix stale catalog wording after shop-view merge"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every numbered step of "Пользовательский флоу" in
