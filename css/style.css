@@ -1,0 +1,77 @@
+:root {
+  color-scheme: light dark;
+  --bg: #0f1115;
+  --card-bg: #1b1f27;
+  --text: #e8e8e8;
+  --muted: #8a8f98;
+  --accent: #34a1eb;
+  --accent-hover: #2688cc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+h1 {
+  font-size: 1.8rem;
+  margin-bottom: 8px;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-bottom: 32px;
+}
+
+#buttons-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.bot-button {
+  display: block;
+  padding: 20px 12px;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+}
+
+.bot-button--active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.bot-button--active:hover {
+  background: var(--accent-hover);
+}
+
+.bot-button--inactive {
+  background: var(--card-bg);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.bot-button--inactive .bot-button__note {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 400;
+  margin-top: 4px;
+}
