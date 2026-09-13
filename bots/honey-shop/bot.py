@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 
-from catalog import CATALOG, get_product
+from catalog import CATALOG
 from cart import add_item, build_payload, cart_lines, cart_total, parse_payload, remove_item, total_for_items
 import checkout
 
@@ -59,8 +59,8 @@ HELP_TEXT = (
 PAYSUPPORT_TEXT = (
     "Оплата проходит через Telegram Stars.\n\n"
     "Это тестовый магазин: возврат Stars возможен по запросу — пришлите "
-    "в этот чат номер квитанции из сообщения об оплате.\n\n"
-    "TODO: владельцу — обрабатывать возвраты методом refundStarPayment."
+    "в этот чат номер квитанции из сообщения об оплате. Сообщение увидит "
+    "владелец бота и оформит возврат вручную."
 )
 
 ASK_ADDRESS_TEXT = "Оплата прошла (⭐ {total} Stars)! Пришлите адрес пункта выдачи Ozon для доставки."
@@ -137,12 +137,12 @@ def shop_keyboard(cart):
             subtotal = product.price * qty
             rows.append([
                 {"text": "➖", "callback_data": "dec:%d" % product.id},
-                {"text": "%s, %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
+                {"text": "%s — %s = %d⭐" % (product.name, liters_text(qty), subtotal), "callback_data": "noop"},
                 {"text": "➕", "callback_data": "inc:%d" % product.id},
             ])
         else:
             rows.append([{"text": "%s — %d ⭐" % (product.name, product.price), "callback_data": "add:%d" % product.id}])
-    if cart:
+    if cart_lines(cart):
         rows.append([{"text": "✅ Оформить заказ (%d ⭐)" % cart_total(cart), "callback_data": "checkout"}])
         rows.append([{"text": "🗑 Очистить корзину", "callback_data": "clear"}])
     return {"inline_keyboard": rows}
@@ -172,7 +172,7 @@ def send_start(token, chat_id, cart):
 
 def send_invoice(token, chat_id, cart):
     lines = cart_lines(cart)
-    api(
+    resp = api(
         token,
         "sendInvoice",
         chat_id=chat_id,
@@ -182,6 +182,8 @@ def send_invoice(token, chat_id, cart):
         currency="XTR",
         prices=[{"label": "Заказ мёда", "amount": cart_total(cart)}],
     )
+    if not resp.get("ok"):
+        api(token, "sendMessage", chat_id=chat_id, text="Не удалось создать счёт. Попробуйте ещё раз или напишите /paysupport.")
 
 
 def append_order(record):
@@ -214,6 +216,13 @@ def handle_pre_checkout(token, pcq):
         )
 
 
+def _parse_product_id(data):
+    try:
+        return int(data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return None
+
+
 def handle_callback_query(token, query):
     data = query.get("data", "")
     user_id = query.get("from", {}).get("id")
@@ -227,19 +236,32 @@ def handle_callback_query(token, query):
     cart = carts.setdefault(user_id, {})
 
     if data.startswith("add:"):
-        add_item(cart, int(data.split(":", 1)[1]))
+        product_id = _parse_product_id(data)
+        if product_id is not None:
+            add_item(cart, product_id)
         send_shop(token, chat_id, cart, message_id)
     elif data.startswith("inc:"):
-        add_item(cart, int(data.split(":", 1)[1]))
+        product_id = _parse_product_id(data)
+        if product_id is not None:
+            add_item(cart, product_id)
         send_shop(token, chat_id, cart, message_id)
     elif data.startswith("dec:"):
-        remove_item(cart, int(data.split(":", 1)[1]))
+        product_id = _parse_product_id(data)
+        if product_id is not None:
+            remove_item(cart, product_id)
         send_shop(token, chat_id, cart, message_id)
     elif data == "clear":
         cart.clear()
         send_shop(token, chat_id, cart, message_id)
     elif data == "checkout":
-        if cart_lines(cart):
+        if user_id in checkout_state:
+            api(
+                token,
+                "sendMessage",
+                chat_id=chat_id,
+                text="У вас есть неоформленный оплаченный заказ — сначала пришлите для него адрес и телефон.",
+            )
+        elif cart_lines(cart):
             send_invoice(token, chat_id, cart)
         else:
             send_shop(token, chat_id, cart, message_id)
@@ -248,7 +270,6 @@ def handle_callback_query(token, query):
 
 def handle_successful_payment(token, message, sp):
     user_id = message["from"]["id"]
-    username = message["from"].get("username", "")
     chat_id = message["chat"]["id"]
     items = parse_payload(sp.get("invoice_payload", ""))
     paid_cart = {pid: qty for pid, qty in items}
@@ -275,9 +296,15 @@ def handle_checkout_text(token, message, entry):
             api(token, "sendMessage", chat_id=chat_id, text="Телефон не может быть пустым. Пришлите номер телефона, привязанный к аккаунту Ozon.")
         else:
             record = checkout.to_order_record(user_id, message["from"].get("username", ""), entry)
-            append_order(record)
+            try:
+                append_order(record)
+            except OSError as exc:
+                log("[order] не удалось записать заказ: %s" % exc)
             del checkout_state[user_id]
             api(token, "sendMessage", chat_id=chat_id, text=order_confirmation_text(record))
+    else:
+        del checkout_state[user_id]
+        send_start(token, chat_id, carts.setdefault(user_id, {}))
 
 
 def handle_update(token, update):

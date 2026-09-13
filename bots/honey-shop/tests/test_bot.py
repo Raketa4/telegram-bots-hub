@@ -294,6 +294,87 @@ class TestBotHandleUpdate(unittest.TestCase):
         params = self.fake_api.last("sendMessage")
         self.assertNotIn("каталог", params["text"].lower())
 
+    def test_invoice_failure_notifies_user(self):
+        bot.carts[self.USER["id"]] = {1: 1}
+
+        class FailingApi(FakeApi):
+            def __call__(self, token, method, **params):
+                if method == "sendInvoice":
+                    self.calls.append((method, params))
+                    return {"ok": False, "description": "boom"}
+                return super().__call__(token, method, **params)
+
+        bot.api = FailingApi()
+        update = {
+            "callback_query": {
+                "id": "cbqfail",
+                "from": self.USER,
+                "data": "checkout",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = bot.api.last("sendMessage")
+        self.assertIsNotNone(params)
+        self.assertIn("не удалось", params["text"].lower())
+
+    def test_checkout_refused_while_order_pending(self):
+        bot.checkout_state[self.USER["id"]] = checkout.start_checkout({1: 1})
+        bot.carts[self.USER["id"]] = {2: 1}
+        update = {
+            "callback_query": {
+                "id": "cbqpending",
+                "from": self.USER,
+                "data": "checkout",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        self.assertIsNone(self.fake_api.last("sendInvoice"))
+        params = self.fake_api.last("sendMessage")
+        self.assertIn("неоформленный", params["text"].lower())
+
+    def test_append_order_failure_does_not_strand_user(self):
+        payload = cart.build_payload({1: 1})
+        bot.carts[self.USER["id"]] = {1: 1}
+        bot.handle_update(self.TOKEN, {
+            "message": {
+                "chat": {"id": self.CHAT_ID},
+                "from": self.USER,
+                "successful_payment": {
+                    "currency": "XTR",
+                    "total_amount": 60,
+                    "invoice_payload": payload,
+                    "telegram_payment_charge_id": "chargeX",
+                },
+            }
+        })
+        bot.handle_update(self.TOKEN, self._message("ПВЗ Ozon, ул. Тестовая 1"))
+
+        orig_append = bot.append_order
+        bot.append_order = lambda record: (_ for _ in ()).throw(OSError("disk full"))
+        try:
+            bot.handle_update(self.TOKEN, self._message("+79990001122"))
+        finally:
+            bot.append_order = orig_append
+
+        self.assertNotIn(self.USER["id"], bot.checkout_state)
+        # A follow-up message must not be silently swallowed:
+        bot.handle_update(self.TOKEN, self._message("что угодно"))
+        self.assertIsNotNone(self.fake_api.last("sendMessage"))
+
+    def test_non_numeric_callback_data_does_not_crash(self):
+        update = {
+            "callback_query": {
+                "id": "cbqbad",
+                "from": self.USER,
+                "data": "add:not-a-number",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)  # must not raise
+        self.assertEqual(bot.carts.get(self.USER["id"], {}), {})
+
 
 if __name__ == "__main__":
     unittest.main()
