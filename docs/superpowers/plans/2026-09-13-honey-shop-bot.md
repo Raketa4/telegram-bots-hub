@@ -2079,6 +2079,91 @@ git commit -m "Fix stale catalog wording after shop-view merge"
 
 ---
 
+### Task 13: Fix multi-item cart checkout (Stars invoices need exactly one price item)
+
+**Added after live-testing checkout with 2+ varieties in the cart:** the
+human partner reported that "Оформить заказ" stops leading to payment
+once the cart holds more than one variety. Root cause: Telegram's Bot
+API requires the `prices` array on `sendInvoice` to contain **exactly
+one** item for payments in Telegram Stars (`currency = "XTR"`) — unlike
+regular-currency invoices, which support itemized multi-line pricing.
+`send_invoice` currently sends one `prices` entry per cart line, so any
+cart with 2+ distinct products produces an invalid invoice request that
+Telegram silently rejects (no payment sheet ever appears). Fix: collapse
+`prices` to a single entry equal to the cart total; the itemized
+breakdown stays in `description`, which already lists every product and
+quantity.
+
+**Files:**
+- Modify: `bots/honey-shop/bot.py`
+- Modify: `bots/honey-shop/tests/test_bot.py`
+
+**Interfaces:** none new — `send_invoice`'s signature is unchanged, only its `sendInvoice` call's `prices` argument changes.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `bots/honey-shop/tests/test_bot.py`'s `TestBotHandleUpdate` class:
+
+```python
+    def test_checkout_with_multiple_varieties_sends_single_price_item(self):
+        bot.carts[self.USER["id"]] = {1: 1, 2: 1}  # Липовый 60⭐ + Гречишный 70⭐
+        update = {
+            "callback_query": {
+                "id": "cbq7",
+                "from": self.USER,
+                "data": "checkout",
+                "message": {"chat": {"id": self.CHAT_ID}},
+            }
+        }
+        bot.handle_update(self.TOKEN, update)
+        params = self.fake_api.last("sendInvoice")
+        self.assertEqual(len(params["prices"]), 1)
+        self.assertEqual(params["prices"][0]["amount"], 130)
+        self.assertIn("Липовый", params["description"])
+        self.assertIn("Гречишный", params["description"])
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: FAIL — `len(params["prices"])` is 2, not 1.
+
+- [ ] **Step 3: Fix `send_invoice`**
+
+```python
+def send_invoice(token, chat_id, cart):
+    lines = cart_lines(cart)
+    api(
+        token,
+        "sendInvoice",
+        chat_id=chat_id,
+        title="Заказ мёда (тест)",
+        description=", ".join("%s, %s" % (p.name, liters_text(qty)) for p, qty, _ in lines),
+        payload=build_payload(cart),
+        currency="XTR",
+        prices=[{"label": "Заказ мёда", "amount": cart_total(cart)}],
+    )
+```
+
+(Telegram Stars invoices require exactly one `LabeledPrice` in `prices`;
+the per-item breakdown lives in `description` instead.)
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `py -3.14 bots/honey-shop/tests/test_bot.py -v`
+Expected: PASS (17 tests, ok) — this also covers the pre-existing
+`test_checkout_sends_invoice_in_stars` (single-item cart), which must
+still pass since a 1-item cart's `prices` was already a single entry.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add bots/honey-shop/bot.py bots/honey-shop/tests/test_bot.py
+git commit -m "Fix multi-item cart checkout: Stars invoices need exactly one price item"
+```
+
+---
+
 ## Self-Review Notes
 
 - **Spec coverage:** every numbered step of "Пользовательский флоу" in
